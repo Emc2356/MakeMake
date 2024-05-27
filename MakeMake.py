@@ -7,14 +7,35 @@ import sys
 import os
 
 
-def warn(message: str) -> None:
-    print(f"[WARNING] {message}", file=sys.stderr)
+class Logger:
+    silent: bool = False
 
+    def __init__(self, file: os.PathLike | None=None) -> None:
+        self.file: os.PathLike | None = file
 
-def error(message: str, code: int=1) -> None:
-    print(f"\033[31m[ERROR] {message}\033[0m", file=sys.stderr)
-    if code != 0:
-        sys.exit(code)
+    def info(self, message: str) -> None:
+        if Logger.silent:
+            return
+        if self.file is not None:
+            print(f"[INFO] from file `{self.file}`: {message}", file=sys.stdout)
+        else:
+            print(f"[INFO] {message}", file=sys.stdout)
+
+    def warn(self, message: str) -> None:
+        if Logger.silent:
+            return
+        if self.file is not None:
+            print(f"[WARNING] from file `{self.file}`: {message}", file=sys.stderr)
+        else:
+            print(f"[WARNING] {message}", file=sys.stderr)
+
+    def error(self, message: str, code: int=1) -> None:
+        if self.file is not None:
+            print(f"\033[31m[ERROR] from file `{self.file}`: {message}\033[0m", file=sys.stderr)
+        else:
+            print(f"\033[31m[ERROR] {message}\033[0m", file=sys.stderr)
+        if code != 0:
+            sys.exit(code)
 
 
 class ConfigFile:
@@ -34,6 +55,8 @@ class ConfigFile:
         self.directories_to_create: list[str] = []
 
         self.dependencies_config_files: dict[str, ConfigFile] = {}
+
+        self.logger: Logger = Logger(self.path)
 
     def add_global(self, key: str, value: str) -> None:
         self.globals[key] = self.apply_globals(value)
@@ -67,27 +90,27 @@ class ConfigFile:
         if self.data.get("globals", None) is None:
             return
         if not isinstance(self.data["globals"], dict):
-            error("`globals` section must be a object that contains *only* strings")
+            self.logger.error("`globals` section must be a object that contains *only* strings")
         for key, value in self.data["globals"].items():
             if not isinstance(value, str):
-                error(f"`{value}` value in `globals` section must be a string")
+                self.logger.error(f"`{value}` value in `globals` section must be a string")
             if not isinstance(key, str):
-                error(f"`{key}` key in `globals` section must be a string")
+                self.logger.error(f"`{key}` key in `globals` section must be a string")
 
             self.add_global(key, value)
 
     def parse_executable(self) -> None:
         if self.data.get("executable", None) is None:
-            error("No `executable` section in config file")
+            self.logger.error("No `executable` section in config file")
 
         if not isinstance(self.data["executable"], dict):
-            error("`executable` section must be a object that contains *only* strings")
+            self.logger.error("`executable` section must be a object that contains *only* strings")
 
         if self.data["executable"].get("name", None) is None:
-            error("no `name` found in executable section")
+            self.logger.error("no `name` found in executable section")
 
         if not isinstance(self.data["executable"]["name"], str):
-            error("`name` field in `executable` section must be a string")
+            self.logger.error("`name` field in `executable` section must be a string")
 
         self.executable_name = self.apply_globals(self.data["executable"]["name"])
 
@@ -95,16 +118,16 @@ class ConfigFile:
 
     def parse_archive(self) -> None:
         if self.data.get("archive", None) is None:
-            error("No `archive` section in config file")
+            self.logger.error("No `archive` section in config file")
 
         if not isinstance(self.data["archive"], dict):
-            error("`archive` section must be a object that contains *only* strings")
+            self.logger.error("`archive` section must be a object that contains *only* strings")
 
         if self.data["archive"].get("name", None) is None:
-            error("no `name` found in archive section")
+            self.logger.error("no `name` found in archive section")
 
         if not isinstance(self.data["archive"]["name"], str):
-            error("`name` field in `archive` section must be a string")
+            self.logger.error("`name` field in `archive` section must be a string")
 
         self.archive_name = self.apply_globals(self.data["archive"]["name"])
 
@@ -112,40 +135,40 @@ class ConfigFile:
 
     def parse_cxx(self) -> None:
         if self.data.get("cxx", None) is None:
-            error("No `cxx` section in config file")
+            self.logger.error("No `cxx` section in config file")
 
         if not isinstance(self.data["cxx"], dict):
-            error("`cxx` section must be a object")
+            self.logger.error("`cxx` section must be a object")
 
         sections = ["standard", "compiler", "release-flags", "debug-flags", "build-dir", "flags"]
 
         for section in sections:
             if self.data["cxx"].get(section, None) is None:
-                error(f"no `{section}` found in cxx section")
+                self.logger.error(f"no `{section}` found in cxx section")
 
         for key, value in self.data["cxx"].items():
             self.cxx[key] = value
 
         if self.cxx.get("standard", None) is None:
-            error("no `standard` found in cxx section")
+            self.logger.error("no `standard` found in cxx section")
         if self.cxx.get("compiler", None) is None:
-            error("no `compiler` found in cxx section")
+            self.logger.error("no `compiler` found in cxx section")
         if self.cxx.get("build-dir", None) is None:
-            error("no `build-dir` found in cxx section")
+            self.logger.error("no `build-dir` found in cxx section")
         if self.cxx.get("flags", None) is None:
-            error("no `flags` found in cxx section")
+            self.logger.error("no `flags` found in cxx section")
 
         if not isinstance(self.cxx["standard"], str):
-            error("`standard` field in `cxx` section must be a string")
+            self.logger.error("`standard` field in `cxx` section must be a string")
         if not isinstance(self.cxx["compiler"], str):
-            error("`compiler` field in `cxx` section must be a string")
+            self.logger.error("`compiler` field in `cxx` section must be a string")
         if not isinstance(self.cxx["build-dir"], str):
-            error("`build-dir` field in `cxx` section must be a string")
+            self.logger.error("`build-dir` field in `cxx` section must be a string")
         if not isinstance(self.cxx["flags"], list):
-            error("`flags` field in `cxx` section must be a array")
+            self.logger.error("`flags` field in `cxx` section must be a array")
         for flag in self.cxx["flags"]:
             if not isinstance(flag, str):
-                error("`flags` field in `cxx` section must be a array of strings")
+                self.logger.error("`flags` field in `cxx` section must be a array of strings")
 
         self.cxx["flags"] = " ".join(self.cxx["flags"])
 
@@ -154,67 +177,67 @@ class ConfigFile:
 
     def parse_include_directories(self) -> None:
         if self.data.get("include-dirs", None) is None:
-            warn("no `include-dirs` section was specified")
+            self.logger.info("no `include-dirs` section was specified")
             return
         self.include_directories = self.data["include-dirs"]
         if not isinstance(self.include_directories, list):
-            error("`include-dirs` must be a array that contains strings")
+            self.logger.error("`include-dirs` must be a array that contains strings")
         
         self.apply_globals(self.include_directories)
 
     def parse_library_directories(self) -> None:
         if self.data.get("library-dirs", None) is None:
-            warn("no `library-dirs` section was specified")
+            self.logger.info("no `library-dirs` section was specified")
             return
         self.library_directories = self.data["library-dirs"]
         if not isinstance(self.library_directories, list):
-            error("`library-dirs` must be a array that contains strings")
+            self.logger.error("`library-dirs` must be a array that contains strings")
         
         self.apply_globals(self.library_directories)
 
     def parse_libraries(self) -> None:
         if self.data.get("libraries", None) is None:
-            warn("no `libraries` section was specified")
+            self.logger.info("no `libraries` section was specified")
             return
         self.libraries = self.data["libraries"]
         if not isinstance(self.libraries, list):
-            error("`libraries` must be a array that contains strings")
+            self.logger.error("`libraries` must be a array that contains strings")
         
         self.apply_globals(self.libraries)
 
     def parse_source_files(self) -> None:
         if self.data.get("source-files", None) is None:
-            error("no `source-files` section was specified")
+            self.logger.error("no `source-files` section was specified")
         self.source_files = self.data["source-files"]
         if not isinstance(self.source_files, list):
-            error("`source-files` must be a array that contains strings")
+            self.logger.error("`source-files` must be a array that contains strings")
         
         self.apply_globals(self.source_files)
 
     def parse_directories_to_create(self) -> None:
         if self.data.get("directories-to-create", None) is None:
-            warn("no `directories-to-create` section was specified")
+            self.logger.info("no `directories-to-create` section was specified")
             return
         self.directories_to_create = self.data["directories-to-create"]
         if not isinstance(self.directories_to_create, list):
-            error("`directories-to-create` must be a array that contains strings")
+            self.logger.error("`directories-to-create` must be a array that contains strings")
         
         self.apply_globals(self.directories_to_create)
 
     def parse_settings(self) -> None:
         if self.data.get("settings", None) is None:
-            warn("no `settings` section was specified")
+            self.logger.info("no `settings` section was specified")
             return
         if not isinstance(self.data["settings"], dict):
-            error("`settings` must be a object that contains *only* strings")
+            self.logger.error("`settings` must be a object that contains *only* strings")
         
         sections = ["src-c-dir", "src-cpp-dir", "out-type"]
 
         for section in sections:
             if self.data["settings"].get(section, None) is None:
-                error(f"no `{section}` found in settings section")
+                self.logger.error(f"no `{section}` found in settings section")
             if not isinstance(self.data["settings"][section], str):
-                error(f"`{section}` field in `settings` section must be a string")
+                self.logger.error(f"`{section}` field in `settings` section must be a string")
 
         self.settings["src-c-dir"] = self.data["settings"]["src-c-dir"]
         self.settings["src-cpp-dir"] = self.data["settings"]["src-cpp-dir"]
@@ -224,29 +247,29 @@ class ConfigFile:
             if isinstance(self.data["settings"]["libraries-dir"], str):
                 self.settings["libraries-dir"] = self.data["settings"]["libraries-dir"]
             else:
-                error(f"`libraries-dir` field in `settings` section must be a string")
+                self.logger.error(f"`libraries-dir` field in `settings` section must be a string")
 
         self.apply_globals(self.settings, "settings")
 
     def parse_dependencies(self) -> None:
         if self.data.get("dependencies", None) is None:
-            warn("no `dependencies` section was specified")
+            self.logger.info("no `dependencies` section was specified")
             return
 
         if self.settings.get("libraries-dir", None) is None:
-            error("`libraries-dir` must be specified in section `settings` in order to use dependencies")
+            self.logger.error("`libraries-dir` must be specified in section `settings` in order to use dependencies")
 
         dependencies = self.data["dependencies"]
 
         for config_path, dependency_data in dependencies.items():
             if not Path(config_path).exists():
-                error(f"dependency `{config_path}` does not exist")
+                self.logger.error(f"dependency `{config_path}` does not exist")
             if not isinstance(dependency_data, dict):
-                error(f"dependency `{config_path}` must be a object")
+                self.logger.error(f"dependency `{config_path}` must be a object")
             if dependency_data.get("globals", None) is None:
-                warn(f"no `globals` field was specified for dependency `{config_path}`")
+                self.logger.info(f"no `globals` field was specified for dependency `{config_path}`")
             if not isinstance(dependency_data["globals"], dict):
-                error(f"`globals` field in dependency `{config_path}` must be an object")
+                self.logger.error(f"`globals` field in dependency `{config_path}` must be an object")
 
             dependency_globals: dict[str, str] = {}
 
@@ -401,8 +424,7 @@ class ConfigFile:
         elif self.settings["out-type"] == "archive":
             self.make_archive(path)
         else:
-            error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake problem")
-
+            self.logger.error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake problem")
 
     @staticmethod
     def read_json(path: os.PathLike) -> None:
@@ -414,8 +436,7 @@ class ConfigFile:
         with open(path, "w") as f:
             f.write(content)
 
-    def format(self) -> str:
-        
+    def format(self) -> str:  
         data = {
             "path": self.path,
             "globals": self.globals,
@@ -432,7 +453,7 @@ class ConfigFile:
         elif self.settings["out-type"] == "archive":
             data["archive_name"] = self.archive_name
         else:
-            error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake error")
+            self.logger.error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake error")
         if len(self.dependencies_config_files) > 0:
             data["dependencies_config_files"] = {}
             for name, cfg_file in self.dependencies_config_files.items():
@@ -441,17 +462,61 @@ class ConfigFile:
         return data
 
 
+def consume_arg(arguments: list[str], target: str) -> bool:
+    for argument in arguments:
+        if argument == target:
+            arguments.remove(argument)
+            return True
+    return False
+
+
+def usage(out) -> None:
+    print(f"Usage: {sys.argv[0]} [config-file]", file=out)
+    print("If no config file is given the default one will be used (cfg.json)", file=out)
+    print("If no config file is given and no default config file is found it exits with code 1", file=out)
+    print("    --silent silence info and warnings", file=out)
+    print("    -f --file specify the config file", file=out)
+    print("    -h --help display this message", file=out)
+
+
 def main() -> None:
+    logger: Logger = Logger()
+
+    argv = sys.argv[:]
+
+    if consume_arg(argv, "-h") or consume_arg(argv, "--help"):
+        usage(sys.stdout)
+        sys.exit(0)
+
+    if consume_arg(argv, "--silent"):
+        Logger.silent = True
+
     file: str 
-    if len(sys.argv) < 2:
-        warn("No config file specified, using default")
+    if len(argv) < 2:
+        logger.info("No config file specified, using default")
         file = "cfg.json"
         if not os.path.exists(file):
-            error("no configuration file given nor the default one was found", 1)
-    else:
-        file = sys.argv[1]
+            logger.error("no configuration file given nor the default one was found", 1)
+    elif len(argv) == 2:
+        file = argv[1]
         if not os.path.exists(file):
-            error(f"Config file `{file}` found", 1)
+            logger.error(f"Config file `{file}` found", 1)
+    elif len(argv) == 3:
+        argv1 = argv[1]
+        if argv1 == "-f" or argv1 == "--file":
+            file = argv[2]
+            if not os.path.exists(file):
+                logger.error(f"Config file `{file}` found", 1)
+        else:
+            logger.error("Too many arguments", 0)
+            usage(sys.stderr)
+            sys.exit(1)
+    else:
+        logger.error("Too many arguments", 0)
+        usage(sys.stderr)
+        sys.exit(1)
+
+    logger.info(f"Using config file `{file}`")
 
     config_file: ConfigFile = ConfigFile(file)
 
