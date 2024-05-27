@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 
+from pprint import pprint
+
 import sys
 import os
 
@@ -24,11 +26,14 @@ class ConfigFile:
         self.cxx: dict[str, str] = {}
         self.settings: dict[str, str] = {}
         self.executable_name: str = ""
+        self.archive_name: str = ""
         self.source_files: list[str] = []
         self.libraries: list[str] = []
         self.include_directories: list[str] = []
         self.library_directories: list[str] = []
         self.directories_to_create: list[str] = []
+
+        self.dependencies_config_files: dict[str, ConfigFile] = {}
 
     def add_global(self, key: str, value: str) -> None:
         self.globals[key] = self.apply_globals(value)
@@ -36,7 +41,7 @@ class ConfigFile:
     def apply_globals(self, target: str | dict | list | None, category="") -> str | dict | list:
         """
         Applies the globals gathered till this point
-
+        
         :param target: that object that the function will act upon. It can be a string, a dict or a list
         :param category: an optional parameter that effects this function only when a dictonary is passed
         :return: the modified object
@@ -88,6 +93,23 @@ class ConfigFile:
 
         self.add_global("executable.name", self.executable_name)
 
+    def parse_archive(self) -> None:
+        if self.data.get("archive", None) is None:
+            error("No `archive` section in config file")
+
+        if not isinstance(self.data["archive"], dict):
+            error("`archive` section must be a object that contains *only* strings")
+
+        if self.data["archive"].get("name", None) is None:
+            error("no `name` found in archive section")
+
+        if not isinstance(self.data["archive"]["name"], str):
+            error("`name` field in `archive` section must be a string")
+
+        self.archive_name = self.apply_globals(self.data["archive"]["name"])
+
+        self.add_global("archive.name", self.archive_name)
+
     def parse_cxx(self) -> None:
         if self.data.get("cxx", None) is None:
             error("No `cxx` section in config file")
@@ -137,7 +159,7 @@ class ConfigFile:
         self.include_directories = self.data["include-dirs"]
         if not isinstance(self.include_directories, list):
             error("`include-dirs` must be a array that contains strings")
-
+        
         self.apply_globals(self.include_directories)
 
     def parse_library_directories(self) -> None:
@@ -147,7 +169,7 @@ class ConfigFile:
         self.library_directories = self.data["library-dirs"]
         if not isinstance(self.library_directories, list):
             error("`library-dirs` must be a array that contains strings")
-
+        
         self.apply_globals(self.library_directories)
 
     def parse_libraries(self) -> None:
@@ -157,7 +179,7 @@ class ConfigFile:
         self.libraries = self.data["libraries"]
         if not isinstance(self.libraries, list):
             error("`libraries` must be a array that contains strings")
-
+        
         self.apply_globals(self.libraries)
 
     def parse_source_files(self) -> None:
@@ -166,7 +188,7 @@ class ConfigFile:
         self.source_files = self.data["source-files"]
         if not isinstance(self.source_files, list):
             error("`source-files` must be a array that contains strings")
-
+        
         self.apply_globals(self.source_files)
 
     def parse_directories_to_create(self) -> None:
@@ -176,7 +198,7 @@ class ConfigFile:
         self.directories_to_create = self.data["directories-to-create"]
         if not isinstance(self.directories_to_create, list):
             error("`directories-to-create` must be a array that contains strings")
-
+        
         self.apply_globals(self.directories_to_create)
 
     def parse_settings(self) -> None:
@@ -185,7 +207,7 @@ class ConfigFile:
             return
         if not isinstance(self.data["settings"], dict):
             error("`settings` must be a object that contains *only* strings")
-
+        
         sections = ["src-c-dir", "src-cpp-dir", "out-type"]
 
         for section in sections:
@@ -198,20 +220,65 @@ class ConfigFile:
         self.settings["src-cpp-dir"] = self.data["settings"]["src-cpp-dir"]
         self.settings["out-type"] = self.data["settings"]["out-type"]
 
+        if self.data["settings"].get("libraries-dir", None) is not None:
+            if isinstance(self.data["settings"]["libraries-dir"], str):
+                self.settings["libraries-dir"] = self.data["settings"]["libraries-dir"]
+            else:
+                error(f"`libraries-dir` field in `settings` section must be a string")
+
         self.apply_globals(self.settings, "settings")
+
+    def parse_dependencies(self) -> None:
+        if self.data.get("dependencies", None) is None:
+            warn("no `dependencies` section was specified")
+            return
+
+        if self.settings.get("libraries-dir", None) is None:
+            error("`libraries-dir` must be specified in section `settings` in order to use dependencies")
+
+        dependencies = self.data["dependencies"]
+
+        for config_path, dependency_data in dependencies.items():
+            if not Path(config_path).exists():
+                error(f"dependency `{config_path}` does not exist")
+            if not isinstance(dependency_data, dict):
+                error(f"dependency `{config_path}` must be a object")
+            if dependency_data.get("globals", None) is None:
+                warn(f"no `globals` field was specified for dependency `{config_path}`")
+            if not isinstance(dependency_data["globals"], dict):
+                error(f"`globals` field in dependency `{config_path}` must be an object")
+
+            dependency_globals: dict[str, str] = {}
+
+            if dependency_data.get("globals", None) is not None:
+                for name, value in dependency_data["globals"].items():
+                    dependency_globals[name] = self.apply_globals(value)
+
+            config_file = ConfigFile(config_path)
+
+            for name, value in dependency_globals.items():
+                config_file.add_global(name, value)
+
+            config_file.parse()
+
+            self.dependencies_config_files[config_path] = config_file
 
     def parse(self) -> None:
         self.data = self.read_json(self.path)
 
         self.parse_globals()
         self.parse_settings()
-        self.parse_executable()
+        if self.settings["out-type"] == "executable":
+            self.parse_executable()
+        elif self.settings["out-type"] == "archive":
+            self.parse_archive()
         self.parse_cxx()
         self.parse_include_directories()
         self.parse_library_directories()
         self.parse_libraries()
         self.parse_source_files()
         self.parse_directories_to_create()
+        self.parse_dependencies()
 
     def source_to_object_files(self) -> str:
         ret = ""
@@ -232,7 +299,7 @@ class ConfigFile:
         if len(self.libraries) > 0:
             content += f"LIBRARIES = -l" + " -l".join(self.libraries)
             content += "\n"
-
+        
         content += f"BASE_CMD = {self.cxx['compiler']} --std=c++{self.cxx['standard']} {self.cxx['flags']} $(INCLUDE_DIRS)\n"
 
         content += f"OBJECT_FILES = {self.source_to_object_files()}\n"
@@ -243,9 +310,71 @@ class ConfigFile:
             content += f'EXTRA_LABELS += {directory}\n'
             content += f'endif\n'
 
+        have_dependencies = len(self.dependencies_config_files) > 0
+        if have_dependencies:
+            for name, cfg_file in self.dependencies_config_files.items():
+                path_to_library = Path(self.settings["libraries-dir"]) / f"lib{Path(cfg_file.archive_name).name}.a"
+
+                content += f"EXTRA_LABELS += {path_to_library}\n"
+
+        archives = ""
+
+        if have_dependencies:
+            for name, cfg_file in self.dependencies_config_files.items():
+                path_to_library = Path(self.settings["libraries-dir"]) / f"lib{Path(cfg_file.archive_name).name}.a"
+
+                archives += f"{path_to_library} "
 
         content += f"{self.executable_name}: $(EXTRA_LABELS) $(OBJECT_FILES)\n"
-        content += f"\t$(BASE_CMD) -o {self.executable_name} $(OBJECT_FILES) $(LIBRARIES)\n"
+        content += f"\t$(BASE_CMD) -o {self.executable_name} $(OBJECT_FILES) {archives} $(LIBRARIES)\n"
+
+        content += f'{self.cxx['build-dir']}%.cpp.o: {self.settings["src-cpp-dir"]}%.cpp\n'
+        content += f'\t$(BASE_CMD) -c -o $@ $<\n'
+        content += f'{self.cxx['build-dir']}%.c.o: {self.settings["src-c-dir"]}%.c\n'
+        content += f'\t$(BASE_CMD) -c -o $@ $<\n'
+
+        for directory in self.directories_to_create:
+            content += f"{directory}:\n"
+            content += f"\tmkdir -p {directory}\n"
+
+        if have_dependencies:
+            for name, cfg_file in self.dependencies_config_files.items():
+                path_to_library = Path(self.settings["libraries-dir"]) / f"lib{Path(cfg_file.archive_name).name}.a"
+
+                content += f"{path_to_library}:\n"
+                content += f"\tmake -f {Path(cfg_file.path).parent / 'Makefile'}\n"
+
+        content += ".PHONY: clean\n"
+        content += "clean:\n"
+        content += f"\trm -rf {' '.join(self.directories_to_create)}\n"
+        content += f"\trm {self.executable_name}\n"
+        if have_dependencies:
+            for name, cfg_file in self.dependencies_config_files.items():
+                content += f"\tmake -f {Path(cfg_file.path).parent / 'Makefile'} clean\n"
+
+        self.write_file(path, content)
+
+    def make_archive(self, path: os.PathLike) -> None:
+        content = "# AUTO GENERATED FILE DO NOT EDIT\n\n"
+
+        if len(self.include_directories) > 0:
+            content += f"INCLUDE_DIRS = -I" + " -I".join(self.include_directories)
+            content += "\n"
+        
+        content += f"BASE_CMD = {self.cxx['compiler']} --std=c++{self.cxx['standard']} {self.cxx['flags']} $(INCLUDE_DIRS)\n"
+
+        content += f"OBJECT_FILES = {self.source_to_object_files()}\n"
+        content += "EXTRA_LABELS =\n"
+
+        for directory in self.directories_to_create:
+            content += f'ifeq ("$(wildcard {directory})", "")\n'
+            content += f'EXTRA_LABELS += {directory}\n'
+            content += f'endif\n'
+
+        archive_name = Path(self.archive_name).parent / (f"lib{Path(self.archive_name).name}.a")
+
+        content += f"{archive_name}: $(EXTRA_LABELS) $(OBJECT_FILES)\n"
+        content += f"\tar rc -o {archive_name} $(OBJECT_FILES)\n"
 
         content += f'{self.cxx['build-dir']}%.cpp.o: {self.settings["src-cpp-dir"]}%.cpp\n'
         content += f'\t$(BASE_CMD) -c -o $@ $<\n'
@@ -259,16 +388,21 @@ class ConfigFile:
         content += ".PHONY: clean\n"
         content += "clean:\n"
         content += f"\trm -rf {' '.join(self.directories_to_create)}\n"
-        content += f"\trm {self.executable_name}\n"
+        content += f"\t"
 
         self.write_file(path, content)
 
     def make(self, path: os.PathLike) -> None:
         if self.settings["out-type"] == "executable":
             self.make_executable(path)
+            if len(self.dependencies_config_files) > 0:
+                for config_path, config_file in self.dependencies_config_files.items():
+                    config_file.make(Path(config_file.path).parent / "Makefile")
+        elif self.settings["out-type"] == "archive":
+            self.make_archive(path)
         else:
-            # TODO: Add support for archives
-            error("currently only executables are supported :/")
+            error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake problem")
+
 
     @staticmethod
     def read_json(path: os.PathLike) -> None:
@@ -280,9 +414,35 @@ class ConfigFile:
         with open(path, "w") as f:
             f.write(content)
 
+    def format(self) -> str:
+        
+        data = {
+            "path": self.path,
+            "globals": self.globals,
+            "settings": self.settings,
+            "cxx": self.cxx,
+            "source_files": self.source_files,
+            "libraries": self.libraries,
+            "include_directories": self.include_directories,
+            "library_directories": self.library_directories,
+            "directories_to_create": self.directories_to_create,
+        }
+        if self.settings["out-type"] == "executable":
+            data["executable_name"] = self.executable_name
+        elif self.settings["out-type"] == "archive":
+            data["archive_name"] = self.archive_name
+        else:
+            error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake error")
+        if len(self.dependencies_config_files) > 0:
+            data["dependencies_config_files"] = {}
+            for name, cfg_file in self.dependencies_config_files.items():
+                data["dependencies_config_files"][name] = cfg_file.format()
+
+        return data
+
 
 def main() -> None:
-    file: str
+    file: str 
     if len(sys.argv) < 2:
         warn("No config file specified, using default")
         file = "cfg.json"
@@ -301,4 +461,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
