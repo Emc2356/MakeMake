@@ -3,6 +3,7 @@ import json
 
 from pprint import pprint
 
+import shutil
 import sys
 import os
 
@@ -64,14 +65,15 @@ class ConfigFile:
     def apply_globals(self, target: str | dict | list | None, category="") -> str | dict | list:
         """
         Applies the globals gathered till this point
-        
+
         :param target: that object that the function will act upon. It can be a string, a dict or a list
         :param category: an optional parameter that effects this function only when a dictonary is passed
         :return: the modified object
         """
         if isinstance(target, str):
             for key, value in self.globals.items():
-                target = target.replace(f"$({key})", value)
+                if isinstance(value, str):
+                    target = target.replace(f"$({key})", value)
             return target
         elif isinstance(target, dict):
             for key, value in target.items():
@@ -177,51 +179,51 @@ class ConfigFile:
 
     def parse_include_directories(self) -> None:
         if self.data.get("include-dirs", None) is None:
-            self.logger.info("no `include-dirs` section was specified")
+            self.logger.info("no `include-dirs` section was specified, skipping...")
             return
         self.include_directories = self.data["include-dirs"]
         if not isinstance(self.include_directories, list):
             self.logger.error("`include-dirs` must be a array that contains strings")
-        
+
         self.apply_globals(self.include_directories)
 
     def parse_library_directories(self) -> None:
         if self.data.get("library-dirs", None) is None:
-            self.logger.info("no `library-dirs` section was specified")
+            self.logger.info("no `library-dirs` section was specified, skipping...")
             return
         self.library_directories = self.data["library-dirs"]
         if not isinstance(self.library_directories, list):
             self.logger.error("`library-dirs` must be a array that contains strings")
-        
+
         self.apply_globals(self.library_directories)
 
     def parse_libraries(self) -> None:
         if self.data.get("libraries", None) is None:
-            self.logger.info("no `libraries` section was specified")
+            self.logger.info("no `libraries` section was specified, skipping...")
             return
         self.libraries = self.data["libraries"]
         if not isinstance(self.libraries, list):
             self.logger.error("`libraries` must be a array that contains strings")
-        
+
         self.apply_globals(self.libraries)
 
     def parse_source_files(self) -> None:
         if self.data.get("source-files", None) is None:
-            self.logger.error("no `source-files` section was specified")
+            self.logger.error("no `source-files` section was specified, skipping...")
         self.source_files = self.data["source-files"]
         if not isinstance(self.source_files, list):
             self.logger.error("`source-files` must be a array that contains strings")
-        
+
         self.apply_globals(self.source_files)
 
     def parse_directories_to_create(self) -> None:
         if self.data.get("directories-to-create", None) is None:
-            self.logger.info("no `directories-to-create` section was specified")
+            self.logger.info("no `directories-to-create` section was specified, skipping...")
             return
         self.directories_to_create = self.data["directories-to-create"]
         if not isinstance(self.directories_to_create, list):
             self.logger.error("`directories-to-create` must be a array that contains strings")
-        
+
         self.apply_globals(self.directories_to_create)
 
     def parse_settings(self) -> None:
@@ -230,7 +232,7 @@ class ConfigFile:
             return
         if not isinstance(self.data["settings"], dict):
             self.logger.error("`settings` must be a object that contains *only* strings")
-        
+
         sections = ["src-c-dir", "src-cpp-dir", "out-type"]
 
         for section in sections:
@@ -253,7 +255,7 @@ class ConfigFile:
 
     def parse_dependencies(self) -> None:
         if self.data.get("dependencies", None) is None:
-            self.logger.info("no `dependencies` section was specified")
+            self.logger.info("no `dependencies` section was specified, skipping...")
             return
 
         if self.settings.get("libraries-dir", None) is None:
@@ -267,7 +269,7 @@ class ConfigFile:
             if not isinstance(dependency_data, dict):
                 self.logger.error(f"dependency `{config_path}` must be a object")
             if dependency_data.get("globals", None) is None:
-                self.logger.info(f"no `globals` field was specified for dependency `{config_path}`")
+                self.logger.info(f"no `globals` field was specified for dependency `{config_path}`, skipping...")
             if not isinstance(dependency_data["globals"], dict):
                 self.logger.error(f"`globals` field in dependency `{config_path}` must be an object")
 
@@ -322,7 +324,7 @@ class ConfigFile:
         if len(self.libraries) > 0:
             content += f"LIBRARIES = -l" + " -l".join(self.libraries)
             content += "\n"
-        
+
         content += f"BASE_CMD = {self.cxx['compiler']} --std=c++{self.cxx['standard']} {self.cxx['flags']} $(INCLUDE_DIRS)\n"
 
         content += f"OBJECT_FILES = {self.source_to_object_files()}\n"
@@ -383,7 +385,7 @@ class ConfigFile:
         if len(self.include_directories) > 0:
             content += f"INCLUDE_DIRS = -I" + " -I".join(self.include_directories)
             content += "\n"
-        
+
         content += f"BASE_CMD = {self.cxx['compiler']} --std=c++{self.cxx['standard']} {self.cxx['flags']} $(INCLUDE_DIRS)\n"
 
         content += f"OBJECT_FILES = {self.source_to_object_files()}\n"
@@ -398,6 +400,7 @@ class ConfigFile:
 
         content += f"{archive_name}: $(EXTRA_LABELS) $(OBJECT_FILES)\n"
         content += f"\tar rc -o {archive_name} $(OBJECT_FILES)\n"
+
 
         content += f'{self.cxx['build-dir']}%.cpp.o: {self.settings["src-cpp-dir"]}%.cpp\n'
         content += f'\t$(BASE_CMD) -c -o $@ $<\n'
@@ -426,6 +429,35 @@ class ConfigFile:
         else:
             self.logger.error(f"unknown output type `{self.settings['out-type']}` propably a MakeMake problem")
 
+    def clean(self) -> None:
+        try:
+            self.logger.info(f"attempting to remove Makefile...")
+            Path("./Makefile").unlink()
+        except FileNotFoundError:
+            self.logger.info(f"Makefile not found")
+
+        for path in self.directories_to_create:
+            try:
+                self.logger.info(f"attempting to remove {path}...")
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                self.logger.info(f"{path} not found")
+
+        if len(self.dependencies_config_files) > 0:
+            for config_path, config_file in self.dependencies_config_files.items():
+                try:
+                    self.logger.info(f"attempting to remove {Path(config_file.path).parent / 'Makefile'}...")
+                    (Path(config_file.path).parent / "Makefile").unlink()
+                except FileNotFoundError:
+                    self.logger.info(f"{Path(config_file.path).parent / 'Makefile'} not found")
+
+                for path in config_file.directories_to_create:
+                    try:
+                        self.logger.info(f"attempting to remove {path}...")
+                        shutil.rmtree(path)
+                    except FileNotFoundError:
+                        self.logger.info(f"{path} not found")
+
     @staticmethod
     def read_json(path: os.PathLike) -> None:
         with open(path, "r") as f:
@@ -436,7 +468,7 @@ class ConfigFile:
         with open(path, "w") as f:
             f.write(content)
 
-    def format(self) -> str:  
+    def format(self) -> str:
         data = {
             "path": self.path,
             "globals": self.globals,
@@ -477,12 +509,15 @@ def usage(out) -> None:
     print("    --silent silence info and warnings", file=out)
     print("    -f --file specify the config file", file=out)
     print("    -h --help display this message", file=out)
+    print("    --clean cleans up ALL the files generated by MakeMake and everything that the Makefiles have generated", file=out)
 
 
 def main() -> None:
     logger: Logger = Logger()
 
     argv = sys.argv[:]
+
+    make_clean: bool = False
 
     if consume_arg(argv, "-h") or consume_arg(argv, "--help"):
         usage(sys.stdout)
@@ -491,7 +526,10 @@ def main() -> None:
     if consume_arg(argv, "--silent"):
         Logger.silent = True
 
-    file: str 
+    if consume_arg(argv, "--clean"):
+        make_clean = True
+
+    file: str
     if len(argv) < 2:
         logger.info("No config file specified, using default")
         file = "cfg.json"
@@ -521,6 +559,13 @@ def main() -> None:
     config_file: ConfigFile = ConfigFile(file)
 
     config_file.parse()
+
+    if make_clean:
+        logger.info("cleaning up...")
+        config_file.clean()
+        logger.info("done")
+        sys.exit(0)
+
     config_file.make("./Makefile")
 
 
